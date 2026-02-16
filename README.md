@@ -1,112 +1,111 @@
 # Flexispot E7 ESPHome Integration
 
-ESPHome custom component for integrating Flexispot E7 standing desks with Home Assistant.
+ESPHome custom component for controlling and monitoring Flexispot E7 standing desks via Home Assistant.
+
+Forked from [NelsonBrandao/flexispot-e7-esphome](https://github.com/NelsonBrandao/flexispot-e7-esphome).
 
 ## Features
 
-- Real-time desk height monitoring
-- Preset buttons (Sit, Stand, 1, 2, Memory)
-- Manual up/down control
-- Automatic display wake-up to maintain height readings
+- Real-time desk height sensor (cm)
+- Preset buttons: Sit, Stand, 1, 2
+- Manual Up / Down control
+- Memory (M) and Wake buttons
+- WiFi signal strength sensor
+- Encrypted API and OTA password protection
 
-## Hardware Requirements
+## Hardware
 
-- ESP32 development board
-- Flexispot E7 desk with RJ45 control panel connection
-- RJ45 breakout connector or cable
+- ESP32 development board (e.g. ESP32-DevKitC)
+- Flexispot E7 desk
+- RJ45 breakout or spliced cable from the desk's control port
 
-## Wiring
+### Wiring
 
-Connect the ESP32 to the desk's RJ45 port (directly from desk, not passing through handset):
+Connect the ESP32 directly to the desk's RJ45 port (not through the handset):
 
-| RJ45 Pin | Wire Color | ESP32 Pin | Function |
-|----------|------------|-----------|----------|
-| 1        | Green      | GPIO1     | TX (commands to desk) |
-| 2        | White/Blue | GPIO3     | RX (data from desk) |
-| 3        | Blue       | GPIO21    | Virtual screen enable |
-| 8        | Black      | GND       | Ground |
-| 8        | Red        | 5V/VIN    | Power (5V) |
+| Wire Color | ESP32 Pin | Function |
+|------------|-----------|----------|
+| Green      | GPIO1     | TX (commands to desk) |
+| White/Blue | GPIO3     | RX (data from desk) |
+| Blue       | GPIO21    | Virtual screen enable |
+| Black      | GND       | Ground |
+| Red        | 5V/VIN    | Power |
 
-> **Note:** Pin numbers may vary. Verify with a multimeter before connecting.
+> Verify your wiring with a multimeter before powering on.
 
-## Installation
+## Setup
 
-1. Copy the `components/desk_height` folder to your ESPHome config directory
-2. Copy `flexispot-e7.yaml` to your ESPHome config directory
-3. Create `secrets.yaml` with your WiFi credentials:
+1. Copy the `components/desk_height/` folder and `flexispot-e7.yaml` to your ESPHome config directory.
+
+2. Create a `secrets.yaml` file (see `secrets.yaml.example`):
+
    ```yaml
-   wifi_ssid: "your_ssid"
-   wifi_password: "your_password"
+   wifi_ssid: "your_wifi_ssid"
+   wifi_password: "your_wifi_password"
+   api_encryption_key: "your_base64_key_here"
+   ota_password: "your_ota_password_here"
    ```
+
+3. Generate an API encryption key:
+
+   ```powershell
+   [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }) -as [byte[]])
+   ```
+
+   Or on Linux/macOS:
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
 4. Flash to your ESP32:
+
    ```bash
    esphome run flexispot-e7.yaml
    ```
 
-## Configuration
+5. In Home Assistant, add the device using the API encryption key when prompted.
 
-### Sensor Filters
+## How It Works
 
-The default filter removes zero values:
+The component communicates with the desk controller over UART at 9600 baud. Height data is returned as three 7-segment encoded display bytes.
 
-```yaml
-sensor:
-  - platform: desk_height
-    filters:
-      - filter_out: 0.0
-```
+On startup, the component sends a single M command to wake the display and retrieve the initial height. After that, it uses a silent wake command to poll for height changes without lighting up the desk's display.
 
-Optional filters you can add:
+### Polling States
 
-```yaml
-    filters:
-      - filter_out: 0.0
-      - throttle: 1s          # Limit updates to once per second
-      - clamp:
-          min_value: 60.0
-          max_value: 125.0
-```
+| State | Poll Interval | Trigger |
+|-------|--------------|---------|
+| Boot  | One-shot after 10s | Startup |
+| Idle  | Every 3s | Default after boot / movement stops |
+| Active | Every 0.33s | Height change detected |
 
-### Polling Behavior
+The component returns to idle after 5 seconds of no height changes.
 
-The component uses a three-state system:
+## Exposed Entities
 
-1. **Boot Wait:** 5 seconds after startup, sends M command to get initial height
-2. **Idle:** Polls every 3 seconds to detect changes
-3. **Active:** When height changes, rapid polls every 300ms until movement stops
+### Sensors
+- **Desk Height** - current height in cm
+- **WiFi RSSI** - signal strength (dBm)
 
-This ensures you always have current height while minimizing unnecessary traffic.
-
-## Protocol
-
-The desk uses a simple UART protocol at 9600 baud:
-
-- **Start byte:** `0x9b` or `0x98`
-- **Length byte:** payload length
-- **Message type:** `0x12` for height data, `0x11` for heartbeat
-- **Payload:** 7-segment display data (3 digits)
-- **End byte:** `0x9d`
-
-Height is transmitted as three 7-segment encoded bytes representing the display digits.
+### Buttons
+- **Preset 1** / **Preset 2** - saved height presets
+- **Sit** / **Stand** - sit and stand presets
+- **Up** / **Down** - manual height adjustment
+- **Memory (M)** - memory/preset save mode
+- **Wake** - silently query the desk for its current height
+- **Reboot ESP** - restart the ESP32
 
 ## Troubleshooting
 
-### "Unknown" height in Home Assistant
-- Check wiring connections
-- Verify the virtual screen pin (GPIO21) is connected
-- Check logs for UART communication
-
-### Height not updating
-- Ensure wake interval is running (check logs for "Wake Up" button presses)
-- Verify clamp filter isn't rejecting valid heights
-
-### Compile errors
-- For faster compilation, switch from `esp-idf` to `arduino` framework in the YAML
+- **"Unknown" or no height reading** - Check wiring, especially the virtual screen pin (GPIO21). This must be held high for the desk to respond.
+- **Height not updating after boot** - Check logs for the initial M command. If the desk doesn't respond, verify TX/RX wiring isn't swapped.
+- **Display lights up every few seconds** - This should not happen. The idle/active polling uses the wake command which does not activate the display. If you see this, check that the firmware is up to date.
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file.
+MIT License - See [LICENSE](LICENSE).
 
-## Acknowledgments
+## Credits
 
-Based on reverse engineering of the Flexispot UART protocol by the ESPHome community.
+Based on the work by [NelsonBrandao](https://github.com/NelsonBrandao/flexispot-e7-esphome) and the ESPHome community's reverse engineering of the Flexispot UART protocol.
