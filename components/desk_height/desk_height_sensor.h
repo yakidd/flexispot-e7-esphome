@@ -9,7 +9,7 @@ namespace desk_height {
 
 enum class DisplayState {
   BOOT_WAIT,   // Waiting 5s after boot before first M command
-  IDLE,        // Polling every 3s to detect changes
+  IDLE,        // Polling every 5s to detect changes
   ACTIVE       // Rapid polling during movement
 };
 
@@ -38,9 +38,9 @@ class DeskHeightSensor : public sensor::Sensor, public Component, public uart::U
   
   // Timing constants (in milliseconds)
   static const uint32_t BOOT_DELAY = 5000;            // 5s delay before first M command
-  static const uint32_t IDLE_POLL_INTERVAL = 3000;    // Poll every 3s when idle
-  static const uint32_t ACTIVE_POLL_INTERVAL = 300;   // Poll every 300ms when active
-  static const uint32_t ACTIVITY_TIMEOUT = 2000;      // 2s no activity = back to idle
+  static const uint32_t IDLE_POLL_INTERVAL = 5000;    // Poll every 5s when idle
+  static const uint32_t ACTIVE_POLL_INTERVAL = 330;   // Poll every 0.33s when active
+  static const uint32_t ACTIVITY_TIMEOUT = 3000;      // 3s no activity = back to idle
   
   // M command to wake display and get height
   static const uint8_t M_COMMAND[8];

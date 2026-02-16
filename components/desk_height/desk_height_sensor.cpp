@@ -81,10 +81,8 @@ void DeskHeightSensor::loop() {
       break;
       
     case DisplayState::IDLE:
-      // Poll every 3 seconds to detect changes
+      // Check every 5 seconds for any incoming UART data
       if (now - last_poll_time_ >= IDLE_POLL_INTERVAL) {
-        ESP_LOGD(TAG, "Polling for height (idle)");
-        send_m_command_();
         last_poll_time_ = now;
       }
       break;
