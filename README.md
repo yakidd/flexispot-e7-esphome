@@ -1,299 +1,112 @@
-# Flexispot E7 ESPHome Controller
+# Flexispot E7 ESPHome Integration
 
-Complete ESPHome integration for Flexispot E7 standing desks with continuous height monitoring and Home Assistant integration.
+ESPHome custom component for integrating Flexispot E7 standing desks with Home Assistant.
 
 ## Features
 
-✅ **Real-time height monitoring** - Updates Home Assistant every 2 seconds  
-✅ **Preset buttons** - Quick access to saved heights (1, 2, Sit, Stand)  
-✅ **Manual controls** - Up/Down buttons  
-✅ **Cover integration** - Nice slider UI in Home Assistant  
-✅ **Memory function** - Save custom presets  
-✅ **Safety limits** - Configurable min/max heights  
-✅ **Auto-reconnect** - Periodic wake commands keep connection alive  
-✅ **Web interface** - Direct access to ESP32  
+- Real-time desk height monitoring
+- Preset buttons (Sit, Stand, 1, 2, Memory)
+- Manual up/down control
+- Automatic display wake-up to maintain height readings
 
 ## Hardware Requirements
 
-- **ESP32 Development Board** (ESP32-DevKitC or similar)
-- **Flexispot E7 Desk** with controller
-- **Wires** for UART connection
+- ESP32 development board
+- Flexispot E7 desk with RJ45 control panel connection
+- RJ45 breakout connector or cable
 
-## Wiring Diagram
+## Wiring
 
-```
-ESP32          Desk Controller
------          ---------------
-GPIO1 (TX)  -> Green wire
-GPIO3 (RX)  -> White/Blue wire
-GPIO21      -> Blue wire (Virtual Screen)
-GND         -> Ground
-```
+Connect the ESP32 to the desk's RJ45 port (directly from desk, not passing through handset):
 
-**Important:** The RJ45 connector on the desk uses the following pinout:
-- Pin 1: Green (TX from desk)
-- Pin 2: White/Blue (RX to desk)
-- Pin 7: Blue (Screen power)
-- Pin 8: Ground
+| RJ45 Pin | Wire Color | ESP32 Pin | Function |
+|----------|------------|-----------|----------|
+| 1        | Green      | GPIO1     | TX (commands to desk) |
+| 2        | White/Blue | GPIO3     | RX (data from desk) |
+| 3        | Blue       | GPIO21    | Virtual screen enable |
+| 8        | Black      | GND       | Ground |
+| 8        | Red        | 5V/VIN    | Power (5V) |
 
-## Software Requirements
-
-- ESPHome 2026.1.5 or newer
-- Home Assistant (for integration)
+> **Note:** Pin numbers may vary. Verify with a multimeter before connecting.
 
 ## Installation
 
-### 1. Copy Files
+1. Copy the `components/desk_height` folder to your ESPHome config directory
+2. Copy `flexispot-e7.yaml` to your ESPHome config directory
+3. Create `secrets.yaml` with your WiFi credentials:
+   ```yaml
+   wifi_ssid: "your_ssid"
+   wifi_password: "your_password"
+   ```
+4. Flash to your ESP32:
+   ```bash
+   esphome run flexispot-e7.yaml
+   ```
 
-Place these files in your ESPHome config directory:
+## Configuration
 
-```
-esphome/
-├── flexispot-e7.yaml
-├── flexispot-e7-height-sensor.h
-└── secrets.yaml
-```
+### Sensor Filters
 
-### 2. Configure Secrets
-
-Edit `secrets.yaml` with your credentials:
-
-```yaml
-wifi_ssid: "YourWiFiNetwork"
-wifi_password: "YourWiFiPassword"
-fallback_password: "FallbackAPPassword"
-api_encryption_key: ""  # Will be generated on first run
-ota_password: "OTAPassword"
-```
-
-### 3. Adjust Settings
-
-In `flexispot-e7.yaml`, update these values for your desk:
+The default filter removes zero values:
 
 ```yaml
-substitutions:
-  # Change these to match your desk's min/max heights
-  min_height: "73.6"  # Your desk's minimum height in cm
-  max_height: "122.9" # Your desk's maximum height in cm
-  
-  # Pin assignments (if different from defaults)
-  uart_tx_pin: "GPIO1"
-  uart_rx_pin: "GPIO3"
-  screen_pin: "GPIO21"
+sensor:
+  - platform: desk_height
+    filters:
+      - filter_out: 0.0
 ```
 
-### 4. Compile and Upload
-
-```bash
-# First time (USB connected)
-esphome run flexispot-e7.yaml
-
-# Subsequent updates (OTA)
-esphome run flexispot-e7.yaml --device flexispot-e7.local
-```
-
-### 5. Add to Home Assistant
-
-The device should auto-discover in Home Assistant. If not:
-1. Go to **Settings** > **Devices & Services**
-2. Click **Add Integration**
-3. Search for **ESPHome**
-4. Enter the device's IP address
-
-## Usage
-
-### Home Assistant Entities
-
-After setup, you'll see these entities:
-
-#### Sensors
-- `sensor.desk_height` - Current desk height in cm
-- `sensor.wifi_signal` - WiFi signal strength
-- `sensor.uptime` - Device uptime
-
-#### Buttons
-- `button.preset_1` - Move to preset 1
-- `button.preset_2` - Move to preset 2
-- `button.sit` - Move to sitting position
-- `button.stand` - Move to standing position
-- `button.memory_m` - Open memory mode
-- `button.restart` - Restart ESP32
-
-#### Cover
-- `cover.desk` - Slider control (0% = sitting, 100% = standing)
-
-#### Numbers
-- `number.target_height` - Set target height (manual entry)
-
-### Setting Presets
-
-To save a preset:
-1. Move desk to desired height using up/down
-2. Press `button.memory_m`
-3. Press the preset button you want to save to (1, 2, Sit, or Stand)
-
-### Automations Example
+Optional filters you can add:
 
 ```yaml
-# Morning routine - raise desk at 9 AM
-automation:
-  - alias: "Raise Desk Morning"
-    trigger:
-      - platform: time
-        at: "09:00:00"
-    action:
-      - service: button.press
-        target:
-          entity_id: button.flexispot_e7_stand
-
-# Lower desk after 8 hours
-  - alias: "Lower Desk Evening"
-    trigger:
-      - platform: time
-        at: "17:00:00"
-    action:
-      - service: button.press
-        target:
-          entity_id: button.flexispot_e7_sit
+    filters:
+      - filter_out: 0.0
+      - throttle: 1s          # Limit updates to once per second
+      - clamp:
+          min_value: 60.0
+          max_value: 125.0
 ```
+
+### Polling Behavior
+
+The component uses a three-state system:
+
+1. **Boot Wait:** 5 seconds after startup, sends M command to get initial height
+2. **Idle:** Polls every 3 seconds to detect changes
+3. **Active:** When height changes, rapid polls every 300ms until movement stops
+
+This ensures you always have current height while minimizing unnecessary traffic.
+
+## Protocol
+
+The desk uses a simple UART protocol at 9600 baud:
+
+- **Start byte:** `0x9b` or `0x98`
+- **Length byte:** payload length
+- **Message type:** `0x12` for height data, `0x11` for heartbeat
+- **Payload:** 7-segment display data (3 digits)
+- **End byte:** `0x9d`
+
+Height is transmitted as three 7-segment encoded bytes representing the display digits.
 
 ## Troubleshooting
 
-### No height readings
+### "Unknown" height in Home Assistant
+- Check wiring connections
+- Verify the virtual screen pin (GPIO21) is connected
+- Check logs for UART communication
 
-**Check:**
-- UART wiring (TX/RX may be swapped)
-- Virtual screen is enabled (GPIO21 should be HIGH)
-- Logs in ESPHome dashboard
+### Height not updating
+- Ensure wake interval is running (check logs for "Wake Up" button presses)
+- Verify clamp filter isn't rejecting valid heights
 
-**Try:**
-```bash
-esphome logs flexispot-e7.yaml
-```
-
-Look for `Height decoded: X.X cm` messages.
-
-### Desk doesn't respond to buttons
-
-**Check:**
-- TX pin connection (green wire)
-- UART baud rate (should be 9600)
-- Desk is powered on
-
-**Debug:**
-Enable UART debugging in the YAML (already enabled by default):
-```yaml
-uart:
-  debug:
-    direction: BOTH
-```
-
-### Height stuck at zero
-
-This usually means:
-- Desk display is off/blank
-- RX pin not connected properly
-- Wrong baud rate
-
-Press any physical button on the desk to wake it up.
-
-### WiFi connection issues
-
-If the device won't connect to WiFi:
-1. Look for fallback AP: `Flexispot E7 Fallback`
-2. Connect to it with password from `secrets.yaml`
-3. Configure WiFi through captive portal
-
-## Technical Details
-
-### Protocol
-
-The desk communicates via UART at 9600 baud using this packet structure:
-
-```
-[START] [LENGTH] [TYPE] [DATA...] [CHECKSUM] [END]
- 0x9b     0x07     0x12   3 bytes    2 bytes   0x9d
-```
-
-**Message Types:**
-- `0x11` - Heartbeat (ignored)
-- `0x12` - Height broadcast (7 bytes data)
-
-**Height Encoding:**
-The 3 data bytes are 7-segment display values:
-- Byte 1: Hundreds digit
-- Byte 2: Tens digit (bit 7 = decimal point)
-- Byte 3: Ones digit
-
-Example: `[0x01] [0x8F] [0x06]` = 119.6 cm
-
-### Continuous Updates
-
-The `.h` file implements two update mechanisms:
-
-1. **Immediate:** When desk broadcasts height (moving/button press)
-2. **Periodic:** Publishes last known height every 2 seconds
-
-This ensures Home Assistant always has current state.
-
-### Safety Features
-
-- Min/max height clamping prevents out-of-range values
-- Delta filter (0.1cm) reduces noise
-- Blank display detection ignores invalid readings
-- Watchdog wake commands every 30s keep connection alive
-
-## Customization
-
-### Change update frequency
-
-In `flexispot-e7-height-sensor.h`, modify:
-```cpp
-const unsigned long publish_interval_ = 2000; // milliseconds
-```
-
-### Adjust wake interval
-
-In `flexispot-e7.yaml`:
-```yaml
-interval:
-  - interval: 30s  # Change to 60s, 15s, etc.
-    then:
-      - button.press: button_wake
-```
-
-### Disable web server
-
-Comment out in YAML:
-```yaml
-# web_server:
-#   port: 80
-```
-
-## Credits
-
-Original protocol reverse engineering by the ESPHome community.
-Rewritten and enhanced for ESPHome 2026.1.5 with continuous monitoring.
+### Compile errors
+- For faster compilation, switch from `esp-idf` to `arduino` framework in the YAML
 
 ## License
 
-MIT License - Free to use and modify.
+MIT License - See [LICENSE](LICENSE) file.
 
-## Support
+## Acknowledgments
 
-For issues or questions:
-1. Check ESPHome logs: `esphome logs flexispot-e7.yaml`
-2. Verify wiring with a multimeter
-3. Test UART communication with a logic analyzer
-4. Check ESPHome community forums
-
-## Version History
-
-- **v2.0** (2026-01-15) - Complete rewrite
-  - Continuous height monitoring
-  - Improved 7-segment decoding
-  - Better error handling
-  - Cover integration
-  - Modern ESPHome 2026.1.5 compatibility
-
-- **v1.0** - Original implementation
+Based on reverse engineering of the Flexispot UART protocol by the ESPHome community.
