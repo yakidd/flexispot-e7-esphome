@@ -172,9 +172,6 @@ void DeskHeightSensor::process_packet_() {
       return;
     }
 
-    // Any non-blank response = display is active, mark activity
-    last_activity_time_ = millis();
-
     // Treat leading blank as zero (normal for heights < 100 cm)
     if (d1 == -2) {
       d1 = 0;
@@ -211,10 +208,15 @@ void DeskHeightSensor::process_packet_() {
 
     ESP_LOGD(TAG, "Height decoded: %.1f cm", new_height);
 
-    // Check for height change - switch to active mode
-    if (current_height_ > 0 && new_height != current_height_ && display_state_ == DisplayState::IDLE) {
-      ESP_LOGI(TAG, "Height change detected, increasing poll rate");
-      display_state_ = DisplayState::ACTIVE;
+    // Reset activity timer and (if needed) switch to active mode only when
+    // height actually changes. This ensures the ACTIVITY_TIMEOUT countdown
+    // starts as soon as the desk stops moving, not when its display goes dark.
+    if (new_height != current_height_) {
+      last_activity_time_ = millis();
+      if (current_height_ > 0 && display_state_ == DisplayState::IDLE) {
+        ESP_LOGI(TAG, "Height change detected, increasing poll rate");
+        display_state_ = DisplayState::ACTIVE;
+      }
     }
 
     current_height_ = new_height;
