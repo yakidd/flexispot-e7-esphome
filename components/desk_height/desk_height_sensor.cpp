@@ -30,43 +30,49 @@ float DeskHeightSensor::get_setup_priority() const {
 void DeskHeightSensor::loop() {
   uint32_t now = millis();
 
-  // Read and process incoming UART data
-  while (this->available()) {
+  // Phase 1: Scan for a valid start byte
+  while (buffer_index_ == 0 && this->available()) {
     uint8_t byte;
     this->read_byte(&byte);
-
-    if (buffer_index_ == 0) {
-      // Wait for start byte
-      if (byte == 0x9b || byte == 0x98) {
-        buffer_[buffer_index_++] = byte;
-      }
-    } else {
-      // Build the packet
+    if (byte == 0x9b || byte == 0x98) {
       buffer_[buffer_index_++] = byte;
+    }
+  }
 
-      // Check if we have enough bytes to know the expected length
-      if (buffer_index_ >= 2) {
-        int expected_length = buffer_[1] + 2; // payload + start + end
+  // Phase 2: Read the length byte
+  if (buffer_index_ == 1 && this->available()) {
+    this->read_byte(&buffer_[buffer_index_++]);
+  }
 
-        // Got complete packet?
-        if (buffer_index_ == expected_length) {
-          // Validate end byte
-          if (buffer_[expected_length - 1] == 0x9d) {
-            process_packet_();
-          } else {
-            ESP_LOGW(TAG, "Invalid end byte: 0x%02X", buffer_[expected_length - 1]);
-          }
-          reset_buffer_();
-        }
+  // Phase 3: Batch-read the rest of the packet once we know its length
+  if (buffer_index_ >= 2) {
+    int expected_length = buffer_[1] + 2;  // payload length + start + end bytes
+
+    if (expected_length > (int) sizeof(buffer_)) {
+      ESP_LOGW(TAG, "Packet length %d exceeds buffer, resetting", expected_length);
+      reset_buffer_();
+    } else {
+      int remaining = expected_length - (int) buffer_index_;
+      if (remaining > 0 && this->available() >= remaining) {
+        this->read_array(buffer_ + buffer_index_, remaining);
+        buffer_index_ += remaining;
       }
 
-      // Prevent buffer overflow
-      if (buffer_index_ >= sizeof(buffer_)) {
-        ESP_LOGW(TAG, "Buffer overflow, resetting");
+      if (buffer_index_ == expected_length) {
+        if (buffer_[expected_length - 1] == 0x9d) {
+          process_packet_();
+        } else {
+          ESP_LOGW(TAG, "Invalid end byte: 0x%02X", buffer_[expected_length - 1]);
+        }
         reset_buffer_();
       }
     }
   }
+
+  // Refresh now after UART processing: last_activity_time_ may have just been
+  // updated inside process_packet_(), and a stale now would cause uint32_t
+  // underflow in the ACTIVITY_TIMEOUT check, falsely triggering "desk stopped".
+  now = millis();
 
   // State machine
   switch (display_state_) {
@@ -171,9 +177,6 @@ void DeskHeightSensor::process_packet_() {
       return;
     }
 
-    // Any non-blank response = display is active, mark activity
-    last_activity_time_ = millis();
-
     // Treat leading blank as zero (normal for heights < 100 cm)
     if (d1 == -2) {
       d1 = 0;
@@ -210,10 +213,15 @@ void DeskHeightSensor::process_packet_() {
 
     ESP_LOGD(TAG, "Height decoded: %.1f cm", new_height);
 
-    // Check for height change - switch to active mode
-    if (current_height_ > 0 && new_height != current_height_ && display_state_ == DisplayState::IDLE) {
-      ESP_LOGI(TAG, "Height change detected, increasing poll rate");
-      display_state_ = DisplayState::ACTIVE;
+    // Reset activity timer and (if needed) switch to active mode only when
+    // height actually changes. This ensures the ACTIVITY_TIMEOUT countdown
+    // starts as soon as the desk stops moving, not when its display goes dark.
+    if (new_height != current_height_) {
+      last_activity_time_ = millis();
+      if (current_height_ > 0 && display_state_ == DisplayState::IDLE) {
+        ESP_LOGI(TAG, "Height change detected, increasing poll rate");
+        display_state_ = DisplayState::ACTIVE;
+      }
     }
 
     current_height_ = new_height;
