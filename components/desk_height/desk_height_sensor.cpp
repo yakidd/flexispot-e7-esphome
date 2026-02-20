@@ -69,6 +69,11 @@ void DeskHeightSensor::loop() {
     }
   }
 
+  // Refresh now after UART processing: last_activity_time_ may have just been
+  // updated inside process_packet_(), and a stale now would cause uint32_t
+  // underflow in the ACTIVITY_TIMEOUT check, falsely triggering "desk stopped".
+  now = millis();
+
   // State machine
   switch (display_state_) {
     case DisplayState::BOOT_WAIT:
