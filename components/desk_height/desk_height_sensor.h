@@ -8,8 +8,8 @@ namespace esphome {
 namespace desk_height {
 
 enum class DisplayState {
-  BOOT_WAIT,   // Waiting 5s after boot before first wake command
-  IDLE,        // Polling every 5s to detect changes
+  BOOT_WAIT,   // Waiting 10s after boot before first wake command
+  IDLE,        // Polling every 3s to detect changes
   ACTIVE       // Rapid polling during movement
 };
 
@@ -34,7 +34,7 @@ class DeskHeightSensor : public sensor::Sensor, public Component, public uart::U
   uint32_t boot_time_ = 0;
   uint32_t last_poll_time_ = 0;
   uint32_t last_activity_time_ = 0;
-  bool initial_reading_done_ = false;
+  [[maybe_unused]] bool initial_reading_done_ = false;
 
   // Timing constants (in milliseconds)
   static const uint32_t BOOT_DELAY = 10000;           // 10s delay before initial M command
